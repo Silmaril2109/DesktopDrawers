@@ -1,0 +1,42 @@
+{
+  "name": "desktop-drawer",
+  "version": "1.0.0",
+  "description": "Cinematic desktop overlay with edge drawers",
+  "main": "electron/main.js",
+  "type": "toolbar",
+  "window": {
+    "skipTaskbar": true,
+    "focusable": false,
+    "transparent": true,
+    "frame": false
+  },
+  "scripts": {
+    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
+    "start": "npm run dev",
+    "build:renderer": "vite build",
+    "build": "npm run build:renderer && electron-builder"
+  },
+  "dependencies": {
+    "framer-motion": "^11.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.0",
+    "autoprefixer": "^10.4.0",
+    "concurrently": "^8.2.0",
+    "cross-env": "^7.0.3",
+    "electron": "^30.0.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "vite": "^5.2.0",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.desktopDrawer.app",
+    "productName": "DesktopDrawer",
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
