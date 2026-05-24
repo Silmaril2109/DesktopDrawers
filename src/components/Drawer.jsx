@@ -2,6 +2,8 @@ import { useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import FileItem from './FileItem.jsx'
 
+const HOVER_OPEN_DELAY = 2000
+
 const DRAWER_W    = 340
 const HANDLE_THICK = 12
 
@@ -43,9 +45,25 @@ function getPanelVariants(side) {
 }
 
 export default function Drawer({ side, files, isOpen, onHandleClick, onDrawerLeave, onDrawerEnter, onReorder, onHide }) {
-  const scrollRef = useRef(null)
+  const scrollRef    = useRef(null)
+  const hoverTimer   = useRef(null)
   const [draggingPath, setDraggingPath] = useState(null)
   const [dragOverPath, setDragOverPath] = useState(null)
+  const [handleHover, setHandleHover]   = useState(false)   // charging up
+
+  const startHover = () => {
+    setHandleHover(true)
+    hoverTimer.current = setTimeout(() => {
+      onHandleClick()
+      setHandleHover(false)
+    }, HOVER_OPEN_DELAY)
+  }
+
+  const cancelHover = () => {
+    clearTimeout(hoverTimer.current)
+    setHandleHover(false)
+    onDrawerLeave()
+  }
 
   const handleDrop = (targetPath) => {
     if (draggingPath && draggingPath !== targetPath) {
@@ -57,19 +75,42 @@ export default function Drawer({ side, files, isOpen, onHandleClick, onDrawerLea
 
   return (
     <>
-      {/* ── Edge handle (click to pull open) ── */}
+      {/* ── Edge handle (hover 2 s to open) ── */}
       <div
         style={getHandleStyle(side)}
-        onMouseDown={onHandleClick}
-        onMouseLeave={onDrawerLeave}
+        onMouseEnter={!isOpen ? startHover : undefined}
+        onMouseLeave={isOpen ? onDrawerLeave : cancelHover}
       >
         <motion.div
           style={{ width: '100%', height: '100%', background: getHandleGlow(side) }}
-          animate={{ opacity: isOpen ? 1 : [0.28, 0.62, 0.28] }}
-          transition={isOpen
-            ? { duration: 0.15 }
+          animate={isOpen
+            ? { opacity: 1, scaleX: 1.6 }
+            : handleHover
+              ? { opacity: 1, scaleX: 1.4 }
+              : { opacity: [0.28, 0.62, 0.28], scaleX: 1 }}
+          transition={isOpen || handleHover
+            ? { duration: isOpen ? 0.15 : HOVER_OPEN_DELAY / 1000, ease: 'easeIn' }
             : { duration: 2.4, repeat: Infinity, ease: 'easeInOut' }}
         />
+        {/* charge-up progress bar */}
+        {handleHover && !isOpen && (
+          <motion.div
+            key="charge"
+            style={{
+              position: 'absolute',
+              [side === 'left' ? 'left' : 'right']: 0,
+              top: 0,
+              width: 3,
+              height: '100%',
+              background: 'rgba(90,140,255,0.9)',
+              boxShadow: '0 0 8px rgba(90,140,255,0.8)',
+              originY: 0,
+              scaleY: 0,
+            }}
+            animate={{ scaleY: 1 }}
+            transition={{ duration: HOVER_OPEN_DELAY / 1000, ease: 'linear' }}
+          />
+        )}
       </div>
 
       {/* ── Drawer panel ── */}

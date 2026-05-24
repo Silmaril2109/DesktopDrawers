@@ -2,11 +2,30 @@ const { app, BrowserWindow, ipcMain, shell, screen, nativeImage } = require('ele
 const path = require('path')
 const fs = require('fs')
 const { exec, execFile } = require('child_process')
+const { promisify } = require('util')
+const execFileAsync = promisify(execFile)
 
 const isDev = process.env.NODE_ENV === 'development'
 
 let mainWindow = null
 let desktopWatcher = null
+const iconCache = new Map()
+
+// Resolve the target path of a Windows .lnk shortcut via PowerShell COM
+async function resolveShortcutTarget(lnkPath) {
+  const escaped = lnkPath.replace(/'/g, "''")
+  const ps = `try{$sh=New-Object -ComObject WScript.Shell;$sc=$sh.CreateShortcut('${escaped}');if($sc.TargetPath){Write-Output $sc.TargetPath}}catch{}`
+  try {
+    const { stdout } = await execFileAsync(
+      'powershell.exe',
+      ['-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+      { windowsHide: true, timeout: 4000 }
+    )
+    return stdout.trim() || null
+  } catch {
+    return null
+  }
+}
 
 function readDesktopFiles() {
   const desktopPath = app.getPath('desktop')
@@ -159,6 +178,9 @@ function createWindow() {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.restore()
   })
 
+  // Elevate to screen-saver level so drawers sit above all normal windows on Windows
+  mainWindow.setAlwaysOnTop(true, 'screen-saver')
+
   // Start click-through; mousemove is still forwarded to renderer with forward:true
   mainWindow.setIgnoreMouseEvents(true, { forward: true })
 
@@ -200,10 +222,20 @@ ipcMain.handle('open-file', async (_, filePath) => {
 })
 
 ipcMain.handle('get-file-icon', async (_, filePath) => {
+  if (iconCache.has(filePath)) return iconCache.get(filePath)
   try {
-    const icon = await app.getFileIcon(filePath, { size: 'normal' })
-    return icon.toDataURL()
+    let iconPath = filePath
+    // For .lnk shortcuts Electron returns the generic shortcut icon — resolve the real target
+    if (filePath.toLowerCase().endsWith('.lnk')) {
+      const target = await resolveShortcutTarget(filePath)
+      if (target && fs.existsSync(target)) iconPath = target
+    }
+    const icon = await app.getFileIcon(iconPath, { size: 'large' })
+    const result = icon.isEmpty() ? null : icon.toDataURL()
+    iconCache.set(filePath, result)
+    return result
   } catch {
+    iconCache.set(filePath, null)
     return null
   }
 })
@@ -238,8 +270,13 @@ ipcMain.handle('write-config', (_, config) => writeConfig(config))
 
 ipcMain.on('start-drag', async (event, filePath) => {
   try {
-    const icon = await app.getFileIcon(filePath, { size: 'small' })
-    event.sender.startDrag({ file: filePath, icon })
+    let iconPath = filePath
+    if (filePath.toLowerCase().endsWith('.lnk')) {
+      const target = await resolveShortcutTarget(filePath)
+      if (target && fs.existsSync(target)) iconPath = target
+    }
+    const icon = await app.getFileIcon(iconPath, { size: 'normal' })
+    event.sender.startDrag({ file: filePath, icon: icon.isEmpty() ? nativeImage.createEmpty() : icon })
   } catch (err) {
     console.error('startDrag error:', err)
   }
