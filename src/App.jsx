@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import Drawer from './components/Drawer.jsx'
 
-const EDGE_THRESHOLD = 14
 const CLOSE_DELAY = 300
 
 export default function App() {
@@ -16,8 +15,6 @@ export default function App() {
   // Refs so async state writes always read the latest value without stale closures
   const fileOrdersRef    = useRef({ left: [], right: [] })
   const hiddenRef        = useRef([])
-
-  const screenW = typeof window !== 'undefined' ? window.screen.width : 1920
 
   useEffect(() => { fileOrdersRef.current = fileOrders }, [fileOrders])
   useEffect(() => { hiddenRef.current     = hidden     }, [hidden])
@@ -46,19 +43,15 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const onMouseMove = (e) => {
-      const { clientX: x } = e
-      const nearLeft  = x <= EDGE_THRESHOLD
-      const nearRight = x >= screenW - EDGE_THRESHOLD
-      const hasDrawer = activeDrawerRef.current !== null
-      if (nearLeft || nearRight || hasDrawer) setIgnoreMouse(false)
+    const onMouseMove = () => {
+      if (activeDrawerRef.current !== null) setIgnoreMouse(false)
       else setIgnoreMouse(true)
     }
     window.addEventListener('mousemove', onMouseMove, { passive: true })
     return () => window.removeEventListener('mousemove', onMouseMove)
-  }, [screenW, setIgnoreMouse])
+  }, [setIgnoreMouse])
 
-  const openDrawer   = useCallback((side) => { clearTimeout(closeTimerRef.current); setActiveDrawer(side) }, [])
+  const openDrawer   = useCallback((side) => { clearTimeout(closeTimerRef.current); setIgnoreMouse(false); setActiveDrawer(side) }, [setIgnoreMouse])
   const scheduleClose = useCallback(() => {
     closeTimerRef.current = setTimeout(() => { setActiveDrawer(null); setIgnoreMouse(true) }, CLOSE_DELAY)
   }, [setIgnoreMouse])
