@@ -44,8 +44,6 @@ export default function App() {
     return () => window.electron.removeDrawerListener()
   }, [])
 
-  useEffect(() => { activeDrawerRef.current = activeDrawer }, [activeDrawer])
-
   const setIgnoreMouse = useCallback((ignore) => {
     // Always send false (re-enable clicks) — never deduplicate it, because the main
     // process can reset setIgnoreMouseEvents externally (e.g. after shell.openPath)
@@ -56,7 +54,12 @@ export default function App() {
     window.electron.setIgnoreMouse(ignore)
   }, [])
 
-  const openDrawer    = useCallback((side) => { clearTimeout(closeTimerRef.current); setActiveDrawer(side) }, [])
+  useEffect(() => {
+    activeDrawerRef.current = activeDrawer
+    setIgnoreMouse(activeDrawer === null)
+  }, [activeDrawer, setIgnoreMouse])
+
+  const openDrawer    = useCallback((side) => { clearTimeout(closeTimerRef.current); setIgnoreMouse(false); setActiveDrawer(side) }, [setIgnoreMouse])
   const scheduleClose = useCallback(() => {
     closeTimerRef.current = setTimeout(() => { setActiveDrawer(null); setIgnoreMouse(true) }, CLOSE_DELAY)
   }, [setIgnoreMouse])

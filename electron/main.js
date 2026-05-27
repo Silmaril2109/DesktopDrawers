@@ -21,6 +21,7 @@ const isDev = process.env.NODE_ENV === 'development'
 let mainWindow = null
 let tray       = null
 let desktopWatcher = null
+let ignoreMouseEvents = true
 const iconCache = new Map()
 
 // ─── Tray icon (generated inline — no external assets required) ───────────────
@@ -307,6 +308,17 @@ function writeConfig(config) {
   }
 }
 
+function applyIgnoreMouseEvents(ignore) {
+  ignoreMouseEvents = ignore
+  if (!mainWindow || mainWindow.isDestroyed()) return
+
+  if (ignore) {
+    mainWindow.setIgnoreMouseEvents(true, { forward: true })
+  } else {
+    mainWindow.setIgnoreMouseEvents(false)
+  }
+}
+
 function createWindow() {
   const primary = screen.getPrimaryDisplay()
   const { x, y, width, height } = primary.bounds
@@ -342,7 +354,7 @@ function createWindow() {
   mainWindow.setAlwaysOnTop(true, 'screen-saver')
 
   // Start click-through; mousemove is still forwarded to renderer with forward:true
-  mainWindow.setIgnoreMouseEvents(true, { forward: true })
+  applyIgnoreMouseEvents(true)
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
@@ -396,11 +408,9 @@ ipcMain.handle('read-desktop', () => readDesktopFiles())
 
 ipcMain.handle('open-file', async (_, filePath) => {
   const result = await shell.openPath(filePath)
-  // Re-arm to click-through so the renderer's state tracking re-syncs on next hover.
-  // Never call blur() on a focusable:false window — it resets setIgnoreMouseEvents internally.
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setIgnoreMouseEvents(true, { forward: true })
-  }
+  // shell.openPath can disturb the native window's mouse flags. Reapply the
+  // state requested by the renderer instead of forcing the drawer click-through.
+  applyIgnoreMouseEvents(ignoreMouseEvents)
   return result
 })
 
@@ -430,13 +440,7 @@ ipcMain.handle('toggle-desktop-icons', (_, hide) => {
 
 // Fire-and-forget for low-latency mouse event toggling
 ipcMain.on('set-ignore-mouse', (_, ignore) => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (ignore) {
-      mainWindow.setIgnoreMouseEvents(true, { forward: true })
-    } else {
-      mainWindow.setIgnoreMouseEvents(false)
-    }
-  }
+  applyIgnoreMouseEvents(ignore)
 })
 
 ipcMain.handle('move-file', (_, { src, dest }) => {
