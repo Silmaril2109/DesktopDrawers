@@ -3,37 +3,30 @@ import Drawer from './components/Drawer.jsx'
 
 const EDGE_THRESHOLD = 14
 const CLOSE_DELAY = 300
+const DRAWER_W = 340  // must match Drawer.jsx
 
 export default function App() {
-  const [files, setFiles]           = useState([])
-  const [fileOrders, setFileOrders] = useState({ left: [], right: [] })
-  const [hidden, setHidden]         = useState([])   // paths excluded from drawers (file untouched on disk)
+  const [drawerFiles, setDrawerFiles] = useState({ left: [], right: [] })
   const [activeDrawer, setActiveDrawer] = useState(null)
 
-  const activeDrawerRef  = useRef(null)
-  const closeTimerRef    = useRef(null)
-  const lastIgnoreState  = useRef(true)
-  // Refs so async state writes always read the latest value without stale closures
-  const fileOrdersRef    = useRef({ left: [], right: [] })
-  const hiddenRef        = useRef([])
+  const activeDrawerRef = useRef(null)
+  const closeTimerRef   = useRef(null)
+  const lastIgnoreState = useRef(true)
 
   const screenW = typeof window !== 'undefined' ? window.screen.width : 1920
 
-  useEffect(() => { fileOrdersRef.current = fileOrders }, [fileOrders])
-  useEffect(() => { hiddenRef.current     = hidden     }, [hidden])
-
   useEffect(() => {
     ;(async () => {
-      const [desktopFiles, config] = await Promise.all([
-        window.electron.readDesktop(),
-        window.electron.readConfig(),
+      const [leftFiles, rightFiles] = await Promise.all([
+        window.electron.readDrawer('left'),
+        window.electron.readDrawer('right'),
       ])
-      setFiles(desktopFiles)
-      if (config.orders) setFileOrders(config.orders)
-      if (config.hidden) setHidden(config.hidden)
+      setDrawerFiles({ left: leftFiles, right: rightFiles })
     })()
-    window.electron.onDesktopChange(setFiles)
-    return () => window.electron.removeDesktopListener()
+    window.electron.onDrawerChange(({ side, files }) => {
+      setDrawerFiles(prev => ({ ...prev, [side]: files }))
+    })
+    return () => window.electron.removeDrawerListener()
   }, [])
 
   useEffect(() => { activeDrawerRef.current = activeDrawer }, [activeDrawer])
@@ -45,6 +38,7 @@ export default function App() {
     }
   }, [])
 
+  // ── Normal mouse movement tracking (hover-to-open handles) ──
   useEffect(() => {
     const onMouseMove = (e) => {
       const { clientX: x } = e
@@ -58,69 +52,91 @@ export default function App() {
     return () => window.removeEventListener('mousemove', onMouseMove)
   }, [screenW, setIgnoreMouse])
 
-  const openDrawer   = useCallback((side) => { clearTimeout(closeTimerRef.current); setActiveDrawer(side) }, [])
+  const openDrawer    = useCallback((side) => { clearTimeout(closeTimerRef.current); setActiveDrawer(side) }, [])
   const scheduleClose = useCallback(() => {
     closeTimerRef.current = setTimeout(() => { setActiveDrawer(null); setIgnoreMouse(true) }, CLOSE_DELAY)
   }, [setIgnoreMouse])
-  const cancelClose  = useCallback(() => clearTimeout(closeTimerRef.current), [])
+  const cancelClose   = useCallback(() => clearTimeout(closeTimerRef.current), [])
 
-  const save = useCallback((orders, hiddenPaths) => {
-    window.electron.writeConfig({ version: 1, orders, hidden: hiddenPaths })
+  // ── Window-level drag detection ──
+  // OS drags (from Explorer/Desktop) don't fire mousemove, so the drawer can close
+  // before the user drags back. These handlers keep the overlay alive and open the
+  // correct drawer as soon as a drag approaches an edge.
+  useEffect(() => {
+    const onWindowDragOver = (e) => {
+      e.preventDefault()                  // required so 'drop' fires
+      setIgnoreMouse(false)
+      cancelClose()                       // keep current drawer open
+      const x = e.clientX
+      if (x <= EDGE_THRESHOLD)             openDrawer('left')
+      else if (x >= screenW - EDGE_THRESHOLD) openDrawer('right')
+    }
+
+    const onWindowDrop = async (e) => {
+      e.preventDefault()
+      const side = activeDrawerRef.current
+      if (!side) return
+
+      const drawerFile = e.dataTransfer.getData('application/x-drawer-file')
+      const drawerSrc  = e.dataTransfer.getData('application/x-drawer-side')
+
+      if (drawerFile) {
+        // Inter-drawer drag
+        if (drawerSrc !== side) await window.electron.moveToDrawer(drawerFile, side)
+      } else {
+        // External files from Explorer / Desktop
+        for (const f of Array.from(e.dataTransfer.files)) {
+          const p = window.electron.getPathForFile(f)
+          if (p) await window.electron.moveToDrawer(p, side)
+        }
+      }
+    }
+
+    window.addEventListener('dragover', onWindowDragOver)
+    window.addEventListener('drop',     onWindowDrop)
+    return () => {
+      window.removeEventListener('dragover', onWindowDragOver)
+      window.removeEventListener('drop',     onWindowDrop)
+    }
+  }, [screenW, setIgnoreMouse, openDrawer, cancelClose])
+
+  const handleMoveToDesktop = useCallback(async (filePath) => {
+    await window.electron.moveFromDrawer(filePath)
   }, [])
 
-  // Files for a drawer: strip hidden paths, then apply saved order
-  const getOrderedFiles = useCallback((side) => {
-    const visible = files.filter(f => !hidden.includes(f.path))
-    const order   = fileOrders[side]
-    if (!order || order.length === 0) return visible
-    return [...visible].sort((a, b) => {
-      const ai = order.indexOf(a.path)
-      const bi = order.indexOf(b.path)
-      if (ai === -1 && bi === -1) return 0
-      if (ai === -1) return 1
-      if (bi === -1) return -1
-      return ai - bi
-    })
-  }, [files, fileOrders, hidden])
+  const handleMoveToDrawer = useCallback(async (filePath, side) => {
+    await window.electron.moveToDrawer(filePath, side)
+  }, [])
 
-  const handleReorder = useCallback((side, fromPath, toPath) => {
-    setFileOrders(prev => {
-      const base = prev[side].length ? prev[side] : files.map(f => f.path)
-      const fi = base.indexOf(fromPath)
-      const ti = base.indexOf(toPath)
-      if (fi === -1 || ti === -1 || fi === ti) return prev
-      const next = [...base]
-      next.splice(fi, 1)
-      next.splice(ti, 0, fromPath)
-      const newOrders = { ...prev, [side]: next }
-      save(newOrders, hiddenRef.current)
-      return newOrders
-    })
-  }, [files, save])
+  const handleMoveBetweenDrawers = useCallback(async (filePath, toSide) => {
+    await window.electron.moveToDrawer(filePath, toSide)
+  }, [])
 
-  // Hide a file from all drawers — desktop file is never touched
-  const handleHide = useCallback((filePath) => {
-    setHidden(prev => {
-      if (prev.includes(filePath)) return prev
-      const next = [...prev, filePath]
-      save(fileOrdersRef.current, next)
-      return next
-    })
-  }, [save])
+  const handleDesktopDrop = useCallback(async (e) => {
+    const filePath = e.dataTransfer.getData('application/x-drawer-file')
+    if (!filePath) return
+    e.preventDefault()
+    await window.electron.moveFromDrawer(filePath)
+  }, [])
 
   return (
-    <div style={{ position: 'fixed', inset: 0, overflow: 'hidden', background: 'transparent' }}>
+    <div
+      style={{ position: 'fixed', inset: 0, overflow: 'hidden', background: 'transparent' }}
+      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
+      onDrop={handleDesktopDrop}
+    >
       {['left', 'right'].map(side => (
         <Drawer
           key={side}
           side={side}
-          files={getOrderedFiles(side)}
+          files={drawerFiles[side]}
           isOpen={activeDrawer === side}
           onHandleClick={() => openDrawer(side)}
           onDrawerLeave={scheduleClose}
           onDrawerEnter={cancelClose}
-          onReorder={(from, to) => handleReorder(side, from, to)}
-          onHide={handleHide}
+          onMoveToDesktop={handleMoveToDesktop}
+          onDropFile={(filePath) => handleMoveToDrawer(filePath, side)}
+          onMoveBetweenDrawers={(filePath) => handleMoveBetweenDrawers(filePath, side)}
         />
       ))}
     </div>

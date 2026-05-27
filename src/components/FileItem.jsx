@@ -61,7 +61,7 @@ function getLabel(file) {
   return dot > 0 ? file.name.slice(0, dot) : file.name
 }
 
-export default function FileItem({ file, onRemove }) {
+export default function FileItem({ file, drawerSide, onRemove }) {
   const [icon, setIcon] = useState(null)
   const [hovered, setHovered] = useState(false)
   const [confirmPending, setConfirmPending] = useState(false)
@@ -84,8 +84,8 @@ export default function FileItem({ file, onRemove }) {
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData('application/x-drawer-file', file.path)
-        e.dataTransfer.effectAllowed = 'copy'
-        window.electron?.startDrag(file.path)
+        e.dataTransfer.setData('application/x-drawer-side', drawerSide || '')
+        e.dataTransfer.effectAllowed = 'move'
       }}
       onDoubleClick={() => window.electron?.openFile(file.path)}
       onMouseEnter={() => setHovered(true)}
@@ -130,7 +130,7 @@ export default function FileItem({ file, onRemove }) {
         <div
           onClick={(e) => { e.stopPropagation(); e.preventDefault(); setConfirmPending(true) }}
           onDoubleClick={(e) => e.stopPropagation()}
-          title="Remove from drawer"
+          title="Send to Desktop"
           style={{
             position: 'absolute', top: -7, left: -7,
             width: 18, height: 18, borderRadius: '50%',
@@ -161,7 +161,7 @@ export default function FileItem({ file, onRemove }) {
             <span style={{
               fontSize: 7.5, letterSpacing: '1.8px', textTransform: 'uppercase',
               color: 'rgba(195,140,140,0.85)',
-            }}>Remove?</span>
+            }}>Desktop?</span>
             <div style={{ display: 'flex', gap: 6 }}>
               {/* Confirm */}
               <div

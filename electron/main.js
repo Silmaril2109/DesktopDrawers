@@ -1,15 +1,75 @@
 const { app, BrowserWindow, ipcMain, shell, screen, nativeImage } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const os = require('os')
 const { exec, execFile } = require('child_process')
 const { promisify } = require('util')
 const execFileAsync = promisify(execFile)
+
+// Prevent 0xC0000005 GPU-process crashes on Windows with transparent composited windows
+app.commandLine.appendSwitch('disable-gpu-sandbox')
+app.commandLine.appendSwitch('no-sandbox')
 
 const isDev = process.env.NODE_ENV === 'development'
 
 let mainWindow = null
 let desktopWatcher = null
 const iconCache = new Map()
+
+// ─── Drawer storage ──────────────────────────────────────────────────────────
+const DRAWER_ROOT = path.join(os.homedir(), 'Documents', 'DesktopDrawer')
+const DRAWER_DIRS = {
+  left:  path.join(DRAWER_ROOT, 'Left'),
+  right: path.join(DRAWER_ROOT, 'Right'),
+  top:   path.join(DRAWER_ROOT, 'Top'),
+}
+const drawerWatchers = {}
+
+function ensureDrawerFolders() {
+  for (const dir of Object.values(DRAWER_DIRS)) {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  }
+}
+
+function readDrawerFiles(side) {
+  const dir = DRAWER_DIRS[side]
+  if (!dir) return []
+  try {
+    const entries = fs.readdirSync(dir)
+    return entries
+      .map(name => {
+        const filePath = path.join(dir, name)
+        try {
+          const stat = fs.statSync(filePath)
+          return { name, path: filePath, isDirectory: stat.isDirectory(), size: stat.size, modified: stat.mtime.getTime() }
+        } catch { return null }
+      })
+      .filter(Boolean)
+      .filter(f => !f.name.startsWith('.') && f.name !== 'desktop.ini')
+      .sort((a, b) => {
+        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
+        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+      })
+  } catch { return [] }
+}
+
+function watchDrawers() {
+  for (const [side, dir] of Object.entries(DRAWER_DIRS)) {
+    let timer = null
+    try {
+      drawerWatchers[side] = fs.watch(dir, { persistent: false }, () => {
+        clearTimeout(timer)
+        timer = setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('drawer-changed', { side, files: readDrawerFiles(side) })
+          }
+        }, 400)
+      })
+    } catch (e) {
+      console.error(`watch drawer ${side}:`, e)
+    }
+  }
+}
 
 // Resolve the target path of a Windows .lnk shortcut via PowerShell COM
 async function resolveShortcutTarget(lnkPath) {
@@ -193,6 +253,7 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null
     if (desktopWatcher) { desktopWatcher.close(); desktopWatcher = null }
+    for (const w of Object.values(drawerWatchers)) { try { w.close() } catch {} }
   })
 
   // Restore config state on startup
@@ -205,8 +266,10 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  ensureDrawerFolders()
   createWindow()
   watchDesktop()
+  watchDrawers()
 })
 
 app.on('window-all-closed', () => app.quit())
@@ -279,5 +342,44 @@ ipcMain.on('start-drag', async (event, filePath) => {
     event.sender.startDrag({ file: filePath, icon: icon.isEmpty() ? nativeImage.createEmpty() : icon })
   } catch (err) {
     console.error('startDrag error:', err)
+  }
+})
+
+// ─── Drawer storage IPC ──────────────────────────────────────────────────────
+
+ipcMain.handle('read-drawer', (_, side) => readDrawerFiles(side))
+
+ipcMain.handle('move-to-drawer', (_, { src, side }) => {
+  try {
+    const dir = DRAWER_DIRS[side]
+    if (!dir) return { success: false, error: 'unknown side' }
+    const dest = path.join(dir, path.basename(src))
+    if (path.resolve(dest) === path.resolve(src)) return { success: true, dest }
+    try {
+      fs.renameSync(src, dest)
+    } catch {
+      // Cross-drive fallback
+      fs.copyFileSync(src, dest)
+      fs.unlinkSync(src)
+    }
+    return { success: true, dest }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
+
+ipcMain.handle('move-from-drawer', (_, { src }) => {
+  try {
+    const desktopPath = app.getPath('desktop')
+    const dest = path.join(desktopPath, path.basename(src))
+    try {
+      fs.renameSync(src, dest)
+    } catch {
+      fs.copyFileSync(src, dest)
+      fs.unlinkSync(src)
+    }
+    return { success: true, dest }
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 })

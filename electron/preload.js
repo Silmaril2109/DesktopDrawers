@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron')
+const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 contextBridge.exposeInMainWorld('electron', {
   readDesktop: () => ipcRenderer.invoke('read-desktop'),
@@ -13,4 +13,12 @@ contextBridge.exposeInMainWorld('electron', {
   writeConfig: (config) => ipcRenderer.invoke('write-config', config),
   onDesktopChange: (cb) => ipcRenderer.on('desktop-changed', (_, files) => cb(files)),
   removeDesktopListener: () => ipcRenderer.removeAllListeners('desktop-changed'),
+  // Electron 30+: file.path is empty in renderer; use this instead
+  getPathForFile: (file) => webUtils.getPathForFile(file),
+  // Drawer storage
+  readDrawer: (side) => ipcRenderer.invoke('read-drawer', side),
+  moveToDrawer: (src, side) => ipcRenderer.invoke('move-to-drawer', { src, side }),
+  moveFromDrawer: (src) => ipcRenderer.invoke('move-from-drawer', { src }),
+  onDrawerChange: (cb) => ipcRenderer.on('drawer-changed', (_, data) => cb(data)),
+  removeDrawerListener: () => ipcRenderer.removeAllListeners('drawer-changed'),
 })
