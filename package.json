@@ -3,13 +3,7 @@
   "version": "1.0.0",
   "description": "Cinematic desktop overlay with edge drawers",
   "main": "electron/main.js",
-  "type": "toolbar",
-  "window": {
-    "skipTaskbar": true,
-    "focusable": false,
-    "transparent": true,
-    "frame": false
-  },
+  "author": "DesktopDrawer",
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
     "start": "npm run dev",
