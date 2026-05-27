@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, screen, nativeImage } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, screen, nativeImage, Tray, Menu } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
@@ -10,11 +10,111 @@ const execFileAsync = promisify(execFile)
 app.commandLine.appendSwitch('disable-gpu-sandbox')
 app.commandLine.appendSwitch('no-sandbox')
 
+// Single-instance guard — second launch focuses existing instance instead of spawning
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+  process.exit(0)
+}
+
 const isDev = process.env.NODE_ENV === 'development'
 
 let mainWindow = null
+let tray       = null
 let desktopWatcher = null
 const iconCache = new Map()
+
+// ─── Tray icon (generated inline — no external assets required) ───────────────
+function makeTrayIcon() {
+  const zlib = require('zlib')
+
+  // CRC32 for PNG chunks
+  const crcTable = (() => {
+    const t = new Uint32Array(256)
+    for (let i = 0; i < 256; i++) {
+      let c = i
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1)
+      t[i] = c
+    }
+    return t
+  })()
+  function crc32(buf) {
+    let c = 0xFFFFFFFF
+    for (let i = 0; i < buf.length; i++) c = crcTable[(c ^ buf[i]) & 0xFF] ^ (c >>> 8)
+    return (c ^ 0xFFFFFFFF) >>> 0
+  }
+  function pngChunk(type, data) {
+    const typeBuf = Buffer.from(type, 'ascii')
+    const lenBuf  = Buffer.allocUnsafe(4); lenBuf.writeUInt32BE(data.length, 0)
+    const crcBuf  = Buffer.allocUnsafe(4); crcBuf.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0)
+    return Buffer.concat([lenBuf, typeBuf, data, crcBuf])
+  }
+
+  const W = 16, H = 16
+  const raw = []
+  for (let y = 0; y < H; y++) {
+    raw.push(0) // filter = None per row
+    for (let x = 0; x < W; x++) {
+      const dx = x - 7.5, dy = y - 7.5, d = Math.sqrt(dx*dx + dy*dy)
+      if (d < 5.5) {
+        const t = Math.max(0, 1 - d / 5.5)
+        raw.push(30 + Math.round(t*70), 70 + Math.round(t*110), 180 + Math.round(t*75), 240)
+      } else if (d < 7) {
+        raw.push(18, 28, 62, 160)
+      } else {
+        raw.push(0, 0, 0, 0)
+      }
+    }
+  }
+
+  const ihdr = Buffer.allocUnsafe(13)
+  ihdr.writeUInt32BE(W, 0); ihdr.writeUInt32BE(H, 4)
+  ihdr[8] = 8; ihdr[9] = 6; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0
+
+  const png = Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlib.deflateSync(Buffer.from(raw))),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ])
+  return nativeImage.createFromBuffer(png)
+}
+
+function createTray() {
+  tray = new Tray(makeTrayIcon())
+  tray.setToolTip('DesktopDrawer')
+
+  const buildMenu = () => {
+    const loginItem = app.getLoginItemSettings()
+    return Menu.buildFromTemplate([
+      {
+        label: 'Reload Overlay',
+        click: () => {
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload()
+        },
+      },
+      {
+        label: 'Restart App',
+        click: () => { app.relaunch(); app.exit(0) },
+      },
+      { type: 'separator' },
+      {
+        label: 'Start with Windows',
+        type: 'checkbox',
+        checked: loginItem.openAtLogin,
+        click: (item) => {
+          app.setLoginItemSettings({ openAtLogin: item.checked })
+          tray.setContextMenu(buildMenu())
+        },
+      },
+      { type: 'separator' },
+      { label: 'Quit DesktopDrawer', role: 'quit' },
+    ])
+  }
+
+  tray.setContextMenu(buildMenu())
+  // Left-click also opens the menu (Windows convention)
+  tray.on('click', () => tray.popUpContextMenu())
+}
 
 // ─── Drawer storage ──────────────────────────────────────────────────────────
 const DRAWER_ROOT = path.join(os.homedir(), 'Documents', 'DesktopDrawer')
@@ -256,6 +356,14 @@ function createWindow() {
     for (const w of Object.values(drawerWatchers)) { try { w.close() } catch {} }
   })
 
+  // Auto-recover if the renderer process crashes
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    console.error('Renderer gone:', details.reason)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      setTimeout(() => mainWindow.webContents.reload(), 1000)
+    }
+  })
+
   // Restore config state on startup
   const config = readConfig()
   if (config.iconsHidden) {
@@ -265,14 +373,22 @@ function createWindow() {
   }
 }
 
+app.on('second-instance', () => {
+  // Second launch attempt — just focus existing window (already handled by lock above,
+  // but this fires if the lock owner is still alive)
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus()
+})
+
 app.whenReady().then(() => {
   ensureDrawerFolders()
   createWindow()
   watchDesktop()
   watchDrawers()
+  createTray()
 })
 
-app.on('window-all-closed', () => app.quit())
+// Keep process alive via tray; quit only through tray → Quit
+app.on('window-all-closed', () => { /* intentionally empty */ })
 
 // ─── IPC ────────────────────────────────────────────────────────────────────
 
