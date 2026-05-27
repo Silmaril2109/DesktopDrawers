@@ -45,11 +45,7 @@ export default function App() {
   }, [])
 
   const setIgnoreMouse = useCallback((ignore) => {
-    // Always send false (re-enable clicks) — never deduplicate it, because the main
-    // process can reset setIgnoreMouseEvents externally (e.g. after shell.openPath)
-    // and the renderer's cached state would silently go out of sync.
-    // Deduplicate true only, since that path is called from a one-shot close timer.
-    if (ignore === true && lastIgnoreState.current === true) return
+    if (lastIgnoreState.current === ignore) return
     lastIgnoreState.current = ignore
     window.electron.setIgnoreMouse(ignore)
   }, [])
@@ -80,7 +76,6 @@ export default function App() {
       const hasDrawer = activeDrawerRef.current !== null
 
       if (hasDrawer) {
-        setIgnoreMouse(false)
         clearCharge()
         return
       }
