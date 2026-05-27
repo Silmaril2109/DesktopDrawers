@@ -1,16 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import Drawer from './components/Drawer.jsx'
 
-const EDGE_THRESHOLD = 14
-const CLOSE_DELAY = 300
-const DRAWER_W = 340  // must match Drawer.jsx
+const CLOSE_DELAY      = 300
+const HANDLE_THICK     = 12   // px — must match Drawer.jsx
+const HOVER_OPEN_DELAY = 2000 // ms — must match Drawer.jsx
 
 export default function App() {
-  const [drawerFiles, setDrawerFiles] = useState({ left: [], right: [] })
+  const [drawerFiles,  setDrawerFiles]  = useState({ left: [], right: [] })
   const [activeDrawer, setActiveDrawer] = useState(null)
+  const [chargingSide, setChargingSide] = useState(null) // 'left' | 'right' | null
 
   const activeDrawerRef = useRef(null)
   const closeTimerRef   = useRef(null)
+  const chargeTimerRef  = useRef(null)
   const lastIgnoreState = useRef(true)
 
   const screenW = typeof window !== 'undefined' ? window.screen.width : 1920
@@ -38,53 +40,79 @@ export default function App() {
     }
   }, [])
 
-  // ── Normal mouse movement tracking (hover-to-open handles) ──
-  useEffect(() => {
-    const onMouseMove = (e) => {
-      const { clientX: x } = e
-      const nearLeft  = x <= EDGE_THRESHOLD
-      const nearRight = x >= screenW - EDGE_THRESHOLD
-      const hasDrawer = activeDrawerRef.current !== null
-      if (nearLeft || nearRight || hasDrawer) setIgnoreMouse(false)
-      else setIgnoreMouse(true)
-    }
-    window.addEventListener('mousemove', onMouseMove, { passive: true })
-    return () => window.removeEventListener('mousemove', onMouseMove)
-  }, [screenW, setIgnoreMouse])
-
   const openDrawer    = useCallback((side) => { clearTimeout(closeTimerRef.current); setActiveDrawer(side) }, [])
   const scheduleClose = useCallback(() => {
     closeTimerRef.current = setTimeout(() => { setActiveDrawer(null); setIgnoreMouse(true) }, CLOSE_DELAY)
   }, [setIgnoreMouse])
   const cancelClose   = useCallback(() => clearTimeout(closeTimerRef.current), [])
 
-  // ── Window-level drag detection ──
-  // OS drags (from Explorer/Desktop) don't fire mousemove, so the drawer can close
-  // before the user drags back. These handlers keep the overlay alive and open the
-  // correct drawer as soon as a drag approaches an edge.
+  const clearCharge = useCallback(() => {
+    clearTimeout(chargeTimerRef.current)
+    chargeTimerRef.current = null
+    setChargingSide(null)
+  }, [])
+
+  // ── Mouse movement: charge timer runs here because mouseenter on the handle
+  //    doesn't fire reliably in setIgnoreMouseEvents(true, {forward:true}) mode.
+  //    Only mousemove is guaranteed to be forwarded.
+  useEffect(() => {
+    const onMouseMove = (e) => {
+      const { clientX: x } = e
+      const hasDrawer = activeDrawerRef.current !== null
+
+      if (hasDrawer) {
+        setIgnoreMouse(false)
+        clearCharge()
+        return
+      }
+
+      // Keep window click-through while no drawer is open
+      setIgnoreMouse(true)
+
+      const nearLeft  = x <= HANDLE_THICK
+      const nearRight = x >= screenW - HANDLE_THICK
+
+      if (nearLeft || nearRight) {
+        const side = nearLeft ? 'left' : 'right'
+        // Don't restart if already charging the same side
+        if (chargeTimerRef.current === null) {
+          setChargingSide(side)
+          chargeTimerRef.current = setTimeout(() => {
+            chargeTimerRef.current = null
+            setChargingSide(null)
+            openDrawer(side)
+          }, HOVER_OPEN_DELAY)
+        }
+      } else {
+        // Cursor left the handle zone — cancel charge
+        if (chargeTimerRef.current !== null) clearCharge()
+      }
+    }
+
+    window.addEventListener('mousemove', onMouseMove, { passive: true })
+    return () => window.removeEventListener('mousemove', onMouseMove)
+  }, [screenW, setIgnoreMouse, openDrawer, clearCharge])
+
+  // ── Window-level drag detection (from Explorer / Desktop) ──
   useEffect(() => {
     const onWindowDragOver = (e) => {
-      e.preventDefault()                  // required so 'drop' fires
+      e.preventDefault()
       setIgnoreMouse(false)
-      cancelClose()                       // keep current drawer open
+      cancelClose()
       const x = e.clientX
-      if (x <= EDGE_THRESHOLD)             openDrawer('left')
-      else if (x >= screenW - EDGE_THRESHOLD) openDrawer('right')
+      if (x <= HANDLE_THICK)             openDrawer('left')
+      else if (x >= screenW - HANDLE_THICK) openDrawer('right')
     }
 
     const onWindowDrop = async (e) => {
       e.preventDefault()
       const side = activeDrawerRef.current
       if (!side) return
-
       const drawerFile = e.dataTransfer.getData('application/x-drawer-file')
       const drawerSrc  = e.dataTransfer.getData('application/x-drawer-side')
-
       if (drawerFile) {
-        // Inter-drawer drag
         if (drawerSrc !== side) await window.electron.moveToDrawer(drawerFile, side)
       } else {
-        // External files from Explorer / Desktop
         for (const f of Array.from(e.dataTransfer.files)) {
           const p = window.electron.getPathForFile(f)
           if (p) await window.electron.moveToDrawer(p, side)
@@ -100,17 +128,9 @@ export default function App() {
     }
   }, [screenW, setIgnoreMouse, openDrawer, cancelClose])
 
-  const handleMoveToDesktop = useCallback(async (filePath) => {
-    await window.electron.moveFromDrawer(filePath)
-  }, [])
-
-  const handleMoveToDrawer = useCallback(async (filePath, side) => {
-    await window.electron.moveToDrawer(filePath, side)
-  }, [])
-
-  const handleMoveBetweenDrawers = useCallback(async (filePath, toSide) => {
-    await window.electron.moveToDrawer(filePath, toSide)
-  }, [])
+  const handleMoveToDesktop      = useCallback(async (p) => window.electron.moveFromDrawer(p), [])
+  const handleMoveToDrawer       = useCallback(async (p, side) => window.electron.moveToDrawer(p, side), [])
+  const handleMoveBetweenDrawers = useCallback(async (p, toSide) => window.electron.moveToDrawer(p, toSide), [])
 
   const handleDesktopDrop = useCallback(async (e) => {
     const filePath = e.dataTransfer.getData('application/x-drawer-file')
@@ -131,12 +151,12 @@ export default function App() {
           side={side}
           files={drawerFiles[side]}
           isOpen={activeDrawer === side}
-          onHandleClick={() => openDrawer(side)}
+          isCharging={chargingSide === side}
           onDrawerLeave={scheduleClose}
           onDrawerEnter={cancelClose}
           onMoveToDesktop={handleMoveToDesktop}
-          onDropFile={(filePath) => handleMoveToDrawer(filePath, side)}
-          onMoveBetweenDrawers={(filePath) => handleMoveBetweenDrawers(filePath, side)}
+          onDropFile={(p) => handleMoveToDrawer(p, side)}
+          onMoveBetweenDrawers={(p) => handleMoveBetweenDrawers(p, side)}
         />
       ))}
     </div>

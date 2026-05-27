@@ -37,15 +37,13 @@ function getPanelVariants(side) {
 }
 
 export default function Drawer({
-  side, files, isOpen,
-  onHandleClick, onDrawerLeave, onDrawerEnter,
+  side, files, isOpen, isCharging,
+  onDrawerLeave, onDrawerEnter,
   onMoveToDesktop, onDropFile, onMoveBetweenDrawers,
 }) {
   const scrollRef     = useRef(null)
-  const hoverTimer    = useRef(null)
   const isDraggingRef = useRef(false)
 
-  const [handleHover,  setHandleHover]  = useState(false)
   const [dropActive,   setDropActive]   = useState(false)
   const [draggingPath, setDraggingPath] = useState(null)
   const [dragOverPath, setDragOverPath] = useState(null)
@@ -62,13 +60,6 @@ export default function Drawer({
       return [...kept, ...added]
     })
   }, [files])
-
-  // ── Handle hover (2 s charge) ──────────────────────────────────────────────
-  const startHover = () => {
-    setHandleHover(true)
-    hoverTimer.current = setTimeout(() => { onHandleClick(); setHandleHover(false) }, HOVER_OPEN_DELAY)
-  }
-  const cancelHover = () => { clearTimeout(hoverTimer.current); setHandleHover(false); onDrawerLeave() }
 
   // ── Reorder ────────────────────────────────────────────────────────────────
   const reorder = (fromPath, toPath) => {
@@ -135,12 +126,10 @@ export default function Drawer({
 
   return (
     <>
-      {/* ── Edge handle ── */}
+      {/* ── Edge handle (charge driven by App mousemove, not mouseenter) ── */}
       <div
         style={getHandleStyle(side)}
-        onMouseEnter={!isOpen ? startHover : undefined}
-        onMouseLeave={isOpen ? onDrawerLeave : cancelHover}
-        onDragEnter={(e) => { e.preventDefault(); onHandleClick(); onDrawerEnter(); setDropActive(true) }}
+        onDragEnter={(e) => { e.preventDefault(); onDrawerEnter(); setDropActive(true) }}
         onDragOver={(e)  => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; onDrawerEnter() }}
         onDrop={handleHandleDrop}
       >
@@ -148,14 +137,14 @@ export default function Drawer({
           style={{ width: '100%', height: '100%', background: getHandleGlow(side) }}
           animate={isOpen
             ? { opacity: 1, scaleX: 1.6 }
-            : handleHover
+            : isCharging
               ? { opacity: 1, scaleX: 1.4 }
               : { opacity: [0.28, 0.62, 0.28], scaleX: 1 }}
-          transition={isOpen || handleHover
+          transition={isOpen || isCharging
             ? { duration: isOpen ? 0.15 : HOVER_OPEN_DELAY / 1000, ease: 'easeIn' }
             : { duration: 2.4, repeat: Infinity, ease: 'easeInOut' }}
         />
-        {handleHover && !isOpen && (
+        {isCharging && !isOpen && (
           <motion.div
             key="charge"
             style={{
