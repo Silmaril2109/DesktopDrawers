@@ -396,7 +396,11 @@ ipcMain.handle('read-desktop', () => readDesktopFiles())
 
 ipcMain.handle('open-file', async (_, filePath) => {
   const result = await shell.openPath(filePath)
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.blur()
+  // Re-arm to click-through so the renderer's state tracking re-syncs on next hover.
+  // Never call blur() on a focusable:false window — it resets setIgnoreMouseEvents internally.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setIgnoreMouseEvents(true, { forward: true })
+  }
   return result
 })
 
