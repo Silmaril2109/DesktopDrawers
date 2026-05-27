@@ -447,6 +447,13 @@ ipcMain.handle('move-file', (_, { src, dest }) => {
 ipcMain.handle('read-config', () => readConfig())
 ipcMain.handle('write-config', (_, config) => writeConfig(config))
 
+ipcMain.handle('save-drawer-order', (_, { side, paths }) => {
+  const config = readConfig()
+  if (!config.drawerOrder) config.drawerOrder = {}
+  config.drawerOrder[side] = paths
+  return writeConfig(config)
+})
+
 ipcMain.on('start-drag', async (event, filePath) => {
   try {
     let iconPath = filePath

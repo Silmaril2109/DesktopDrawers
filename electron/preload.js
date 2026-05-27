@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electron', {
   // Electron 30+: file.path is empty in renderer; use this instead
   getPathForFile: (file) => webUtils.getPathForFile(file),
   // Drawer storage
+  saveDrawerOrder: (side, paths) => ipcRenderer.invoke('save-drawer-order', { side, paths }),
   readDrawer: (side) => ipcRenderer.invoke('read-drawer', side),
   moveToDrawer: (src, side) => ipcRenderer.invoke('move-to-drawer', { src, side }),
   moveFromDrawer: (src) => ipcRenderer.invoke('move-from-drawer', { src }),

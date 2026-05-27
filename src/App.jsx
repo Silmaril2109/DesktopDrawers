@@ -1,6 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import Drawer from './components/Drawer.jsx'
 
+function applyOrder(files, order) {
+  if (!order || order.length === 0) return files
+  const byPath = new Map(files.map(f => [f.path, f]))
+  const sorted = order.filter(p => byPath.has(p)).map(p => byPath.get(p))
+  const rest   = files.filter(f => !order.includes(f.path))
+  return [...sorted, ...rest]
+}
+
 const CLOSE_DELAY      = 300
 const HANDLE_THICK     = 12   // px — must match Drawer.jsx
 const HOVER_OPEN_DELAY = 2000 // ms — must match Drawer.jsx
@@ -19,11 +27,16 @@ export default function App() {
 
   useEffect(() => {
     ;(async () => {
-      const [leftFiles, rightFiles] = await Promise.all([
+      const [leftFiles, rightFiles, config] = await Promise.all([
         window.electron.readDrawer('left'),
         window.electron.readDrawer('right'),
+        window.electron.readConfig(),
       ])
-      setDrawerFiles({ left: leftFiles, right: rightFiles })
+      const order = config.drawerOrder || {}
+      setDrawerFiles({
+        left:  applyOrder(leftFiles,  order.left),
+        right: applyOrder(rightFiles, order.right),
+      })
     })()
     window.electron.onDrawerChange(({ side, files }) => {
       setDrawerFiles(prev => ({ ...prev, [side]: files }))

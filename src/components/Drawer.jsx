@@ -70,6 +70,7 @@ export default function Drawer({
       if (fi === -1 || ti === -1 || fi === ti) return prev
       const [item] = arr.splice(fi, 1)
       arr.splice(ti, 0, item)
+      window.electron.saveDrawerOrder(side, arr.map(f => f.path))
       return arr
     })
   }
