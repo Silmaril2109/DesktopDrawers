@@ -106,7 +106,7 @@ function createTray() {
   tray = new Tray(makeTrayIconWithColor(initColor))
   tray.setToolTip('DesktopDrawer')
 
-  const DELAY_OPTIONS = [500, 1000, 1500, 2000, 3000]
+  const DELAY_OPTIONS = [500, 1000, 1500, 2000, 3000,4000,5000,6000,7000,8000,9000,10000]
 
   const buildMenu = () => {
     const loginItem    = app.getLoginItemSettings()
