@@ -22,4 +22,7 @@ contextBridge.exposeInMainWorld('electron', {
   moveFromDrawer: (src) => ipcRenderer.invoke('move-from-drawer', { src }),
   onDrawerChange: (cb) => ipcRenderer.on('drawer-changed', (_, data) => cb(data)),
   removeDrawerListener: () => ipcRenderer.removeAllListeners('drawer-changed'),
+  updateTrayColor: (hex) => ipcRenderer.send('update-tray-color', hex),
+  onHoverDelayChange: (cb) => ipcRenderer.on('hover-delay-changed', (_, ms) => cb(ms)),
+  removeHoverDelayListener: () => ipcRenderer.removeAllListeners('hover-delay-changed'),
 })

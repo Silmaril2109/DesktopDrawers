@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 
-// c = dot/border color, g = glow spread color
+// File-type dot/glow colors — semantic, stay fixed regardless of drawer theme
 const TYPES = {
   _dir: { c: 'rgba(215,168,48,0.88)',  g: 'rgba(215,168,48,0.32)' },
   pdf:  { c: 'rgba(228,72,52,0.82)',   g: 'rgba(228,72,52,0.28)' },
@@ -61,7 +61,26 @@ function getLabel(file) {
   return dot > 0 ? file.name.slice(0, dot) : file.name
 }
 
-export default function FileItem({ file, drawerSide, onRemove }) {
+// Derive card chrome colors from the drawer's accent color.
+// Multipliers calibrated so #3458A8 reproduces the original values exactly.
+function deriveCardColors(hex) {
+  const clean = (hex || '#3458A8').replace('#', '')
+  const r = parseInt(clean.slice(0, 2), 16)
+  const g = parseInt(clean.slice(2, 4), 16)
+  const b = parseInt(clean.slice(4, 6), 16)
+  const cc = (rv, gv, bv, a) =>
+    `rgba(${Math.max(0,Math.min(255,Math.round(rv)))},${Math.max(0,Math.min(255,Math.round(gv)))},${Math.max(0,Math.min(255,Math.round(bv)))},${a})`
+  return {
+    frameBg:     `linear-gradient(150deg, ${cc(r*.135, g*.114, b*.143, 0.98)} 0%, ${cc(r*.231, g*.205, b*.25, 0.95)} 100%)`,
+    border:       cc(r*.615, g*.591, b*.607, 0.65),
+    shadowInset:  cc(r*1.538, g*1.364, b*1.190, 0.06),
+    bracketIdle:  cc(r*.923, g*.852, b*.821, 0.55),
+    labelIdle:    cc(r*1.885, g*1.477, b*1.083, 0.76),
+    labelHover:   cc(r*3.558, g*2.386, b*1.476, 0.95),
+  }
+}
+
+export default function FileItem({ file, drawerSide, accentColor, onRemove }) {
   const [icon, setIcon] = useState(null)
   const [hovered, setHovered] = useState(false)
   const [confirmPending, setConfirmPending] = useState(false)
@@ -76,8 +95,9 @@ export default function FileItem({ file, drawerSide, onRemove }) {
   }, [file.path])
 
   const { c: typeColor, g: typeGlow } = getType(file)
+  const card = deriveCardColors(accentColor)
   const label = getLabel(file)
-  const bracketStroke = hovered ? typeColor : 'rgba(48,75,138,0.55)'
+  const bracketStroke = hovered ? typeColor : card.bracketIdle
 
   return (
     <motion.div
@@ -107,18 +127,18 @@ export default function FileItem({ file, drawerSide, onRemove }) {
       {/* ── Icon frame ── */}
       <motion.div
         animate={{
-          borderColor: hovered ? typeColor : 'rgba(32,52,102,0.65)',
+          borderColor: hovered ? typeColor : card.border,
           boxShadow: hovered
             ? `0 0 22px ${typeGlow}, 0 4px 14px rgba(0,0,0,0.55), inset 0 1px 0 rgba(140,180,255,0.10)`
-            : `0 2px 8px rgba(0,0,0,0.5), inset 0 1px 0 rgba(80,120,200,0.06)`,
+            : `0 2px 8px rgba(0,0,0,0.5), inset 0 1px 0 ${card.shadowInset}`,
         }}
         transition={{ duration: 0.2 }}
         style={{
           width: 54,
           height: 54,
           borderRadius: 8,
-          background: 'linear-gradient(150deg, rgba(7,10,24,0.98) 0%, rgba(12,18,42,0.95) 100%)',
-          border: '1px solid rgba(32,52,102,0.65)',
+          background: card.frameBg,
+          border: `1px solid ${card.border}`,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -126,7 +146,7 @@ export default function FileItem({ file, drawerSide, onRemove }) {
           flexShrink: 0,
         }}
       >
-        {/* Remove button — top-left, hover only, never touches disk */}
+        {/* Remove button */}
         <div
           onClick={(e) => { e.stopPropagation(); e.preventDefault(); setConfirmPending(true) }}
           onDoubleClick={(e) => e.stopPropagation()}
@@ -148,7 +168,7 @@ export default function FileItem({ file, drawerSide, onRemove }) {
           <span style={{ fontSize: 8, color: 'rgba(220,72,72,0.95)', lineHeight: 1, userSelect: 'none', pointerEvents: 'none' }}>✕</span>
         </div>
 
-        {/* Confirm-remove overlay — replaces icon content until resolved */}
+        {/* Confirm-remove overlay */}
         {confirmPending && (
           <div style={{
             position: 'absolute', inset: 0, borderRadius: 7, zIndex: 40,
@@ -163,7 +183,6 @@ export default function FileItem({ file, drawerSide, onRemove }) {
               color: 'rgba(195,140,140,0.85)',
             }}>Desktop?</span>
             <div style={{ display: 'flex', gap: 6 }}>
-              {/* Confirm */}
               <div
                 onClick={(e) => { e.stopPropagation(); setConfirmPending(false); onRemove && onRemove() }}
                 onDoubleClick={(e) => e.stopPropagation()}
@@ -176,7 +195,6 @@ export default function FileItem({ file, drawerSide, onRemove }) {
                   fontSize: 11, color: 'rgba(80,220,80,0.95)',
                   transition: 'box-shadow 0.15s',
                 }}>✓</div>
-              {/* Cancel */}
               <div
                 onClick={(e) => { e.stopPropagation(); setConfirmPending(false) }}
                 onDoubleClick={(e) => e.stopPropagation()}
@@ -202,7 +220,7 @@ export default function FileItem({ file, drawerSide, onRemove }) {
           transition: 'background 0.22s',
         }} />
 
-        {/* Corner bracket SVG */}
+        {/* Corner brackets */}
         <svg
           viewBox="0 0 54 54"
           fill="none"
@@ -214,7 +232,7 @@ export default function FileItem({ file, drawerSide, onRemove }) {
           <path d="M39 50 L50 50 L50 39" stroke={bracketStroke} strokeWidth="1.3" strokeLinecap="round" style={{ transition: 'stroke 0.2s' }} />
         </svg>
 
-        {/* File-type dot — top-right */}
+        {/* File-type dot */}
         <div style={{
           position: 'absolute', top: 6, right: 6,
           width: 5, height: 5, borderRadius: '50%',
@@ -223,7 +241,7 @@ export default function FileItem({ file, drawerSide, onRemove }) {
           transition: 'box-shadow 0.2s',
         }} />
 
-        {/* Native icon or fallback */}
+        {/* Icon */}
         {icon ? (
           <img
             src={icon}
@@ -250,7 +268,7 @@ export default function FileItem({ file, drawerSide, onRemove }) {
       {/* Label */}
       <span style={{
         fontSize: 9.5,
-        color: hovered ? 'rgba(185,210,248,0.95)' : 'rgba(98,130,182,0.76)',
+        color: hovered ? card.labelHover : card.labelIdle,
         textAlign: 'center',
         lineHeight: 1.3,
         maxWidth: 68,

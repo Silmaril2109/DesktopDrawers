@@ -2,61 +2,105 @@ import { useRef, useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import FileItem from './FileItem.jsx'
 
-const HOVER_OPEN_DELAY = 2000
+const DEFAULT_HOVER_DELAY = 2000
 const DRAWER_W    = 340
 const HANDLE_THICK = 12
 const LABELS = { left: 'Archive', right: 'Reliquary' }
 const spring = { type: 'spring', damping: 32, stiffness: 320, mass: 0.8 }
+const DEFAULT_COLOR = '#3458A8'
+
+function hexToRgb(hex) {
+  const clean = (hex || DEFAULT_COLOR).replace('#', '')
+  return [
+    parseInt(clean.slice(0, 2), 16),
+    parseInt(clean.slice(2, 4), 16),
+    parseInt(clean.slice(4, 6), 16),
+  ]
+}
+
+function rgba([r, g, b], a) { return `rgba(${r},${g},${b},${a})` }
+function clamp(v)           { return Math.max(0, Math.min(255, Math.round(v))) }
+
+function deriveColors(hex) {
+  const rgb   = hexToRgb(hex)
+  const [r, g, b] = rgb
+  const scale = (f) => [clamp(r * f), clamp(g * f), clamp(b * f)]
+  const boost = [clamp(r * 1.7), clamp(g * 1.6), clamp(b * 1.5)]
+  const mid   = scale(0.73)
+  const dark  = scale(0.35)
+  const dim   = scale(0.54)
+  const panel1 = [clamp(r * 0.13), clamp(g * 0.11), clamp(b * 0.12)]
+  const panel2 = [clamp(r * 0.19), clamp(g * 0.16), clamp(b * 0.15)]
+  return {
+    handleGradientL: `linear-gradient(to right, ${rgba(rgb, 0.92)} 0%, ${rgba(mid, 0.52)} 50%, transparent 100%)`,
+    handleGradientR: `linear-gradient(to left,  ${rgba(rgb, 0.92)} 0%, ${rgba(mid, 0.52)} 50%, transparent 100%)`,
+    panelBg:      `linear-gradient(160deg, ${rgba(panel1, 0.97)} 0%, ${rgba(panel2, 0.95)} 100%)`,
+    border:       rgba(mid, 0.45),
+    shadow:       rgba(dark, 0.5),
+    ambient:      rgba(dim, 0.18),
+    charge:       rgba(boost, 0.9),
+    chargeShadow: rgba(boost, 0.8),
+    headerText:   rgba(boost, 0.75),
+    headerDiv:    rgba(mid, 0.45),
+    dropOutline:  rgba(boost, 0.55),
+    dropText:     rgba(boost, 0.7),
+    fileOutline:  rgba(boost, 0.72),
+    fileShadow:   rgba(boost, 0.3),
+    empty:        rgba(rgb, 0.4),
+    headerCount:  rgba(mid, 0.55),
+  }
+}
 
 function getHandleStyle(side) {
   const base = { position: 'fixed', zIndex: 100, cursor: 'default' }
   if (side === 'left') return { ...base, left: 0, top: 0, width: HANDLE_THICK, height: '100vh' }
   return                      { ...base, right: 0, top: 0, width: HANDLE_THICK, height: '100vh' }
 }
-function getHandleGlow(side) {
-  if (side === 'left')
-    return 'linear-gradient(to right, rgba(52,88,168,0.92) 0%, rgba(38,65,132,0.52) 50%, transparent 100%)'
-  return   'linear-gradient(to left,  rgba(52,88,168,0.92) 0%, rgba(38,65,132,0.52) 50%, transparent 100%)'
-}
-function getPanelStyle(side) {
+
+function getPanelStyle(side, col) {
   const base = {
     position: 'fixed', zIndex: 200,
-    background: 'linear-gradient(160deg, rgba(7,10,20,0.97) 0%, rgba(10,14,26,0.95) 100%)',
+    background: col.panelBg,
     backdropFilter: 'blur(22px)',
     overflow: 'hidden', display: 'flex', flexDirection: 'column',
   }
   if (side === 'left')
     return { ...base, left: 0, top: 0, width: DRAWER_W, height: '100vh',
-             borderRight: '1px solid rgba(38,62,118,0.45)', boxShadow: '5px 0 40px rgba(18,36,85,0.5)' }
+             borderRight: `1px solid ${col.border}`, boxShadow: `5px 0 40px ${col.shadow}` }
   return   { ...base, right: 0, top: 0, width: DRAWER_W, height: '100vh',
-             borderLeft: '1px solid rgba(38,62,118,0.45)', boxShadow: '-5px 0 40px rgba(18,36,85,0.5)' }
+             borderLeft: `1px solid ${col.border}`, boxShadow: `-5px 0 40px ${col.shadow}` }
 }
+
 function getPanelVariants(side) {
   if (side === 'left') return { hidden: { x: -DRAWER_W - 10 }, visible: { x: 0 }, exit: { x: -DRAWER_W - 10 } }
   return                      { hidden: { x: DRAWER_W + 10 },  visible: { x: 0 }, exit: { x: DRAWER_W + 10 } }
 }
 
 export default function Drawer({
-  side, files, isOpen, isCharging,
+  side, files, isOpen, isCharging, color, hoverDelay, onColorChange,
   onDrawerLeave, onDrawerEnter,
   onMoveToDesktop, onDropFile, onMoveBetweenDrawers,
 }) {
+  const HOVER_OPEN_DELAY = hoverDelay ?? DEFAULT_HOVER_DELAY
   const scrollRef     = useRef(null)
+  const colorInputRef = useRef(null)
   const isDraggingRef = useRef(false)
 
   const [dropActive,   setDropActive]   = useState(false)
   const [draggingPath, setDraggingPath] = useState(null)
   const [dragOverPath, setDragOverPath] = useState(null)
 
+  const col = deriveColors(color || DEFAULT_COLOR)
+
   // localFiles mirrors `files` but preserves user drag-to-reorder
   const [localFiles, setLocalFiles] = useState(files)
 
   useEffect(() => {
     setLocalFiles(prev => {
-      const cur  = new Set(files.map(f => f.path))
+      const cur   = new Set(files.map(f => f.path))
       const prev_ = new Set(prev.map(f => f.path))
-      const kept = prev.filter(f => cur.has(f.path))           // maintain order, remove deleted
-      const added = files.filter(f => !prev_.has(f.path))     // new files go to end
+      const kept  = prev.filter(f => cur.has(f.path))
+      const added = files.filter(f => !prev_.has(f.path))
       return [...kept, ...added]
     })
   }, [files])
@@ -87,7 +131,6 @@ export default function Drawer({
     })
   }
 
-  // Per-file-item drop (reorder within drawer OR inter-drawer move)
   const handleFileItemDrop = (e, targetPath) => {
     e.preventDefault()
     e.stopPropagation()
@@ -102,7 +145,6 @@ export default function Drawer({
     }
   }
 
-  // Panel-level drop (external files, or inter-drawer landing on empty space)
   const handlePanelDrop = (e) => {
     e.preventDefault()
     e.stopPropagation()
@@ -114,7 +156,6 @@ export default function Drawer({
     else if (!srcFile && e.dataTransfer.files.length > 0) processExternalDrop(e)
   }
 
-  // Handle-level drop (drawer not yet open when file dragged to edge)
   const handleHandleDrop = (e) => {
     e.preventDefault()
     e.stopPropagation()
@@ -127,7 +168,7 @@ export default function Drawer({
 
   return (
     <>
-      {/* ── Edge handle (charge driven by App mousemove, not mouseenter) ── */}
+      {/* ── Edge handle ── */}
       <div
         style={getHandleStyle(side)}
         onDragEnter={(e) => { e.preventDefault(); onDrawerEnter(); setDropActive(true) }}
@@ -135,7 +176,10 @@ export default function Drawer({
         onDrop={handleHandleDrop}
       >
         <motion.div
-          style={{ width: '100%', height: '100%', background: getHandleGlow(side) }}
+          style={{
+            width: '100%', height: '100%',
+            background: side === 'left' ? col.handleGradientL : col.handleGradientR,
+          }}
           animate={isOpen
             ? { opacity: 1, scaleX: 1.6 }
             : isCharging
@@ -151,7 +195,7 @@ export default function Drawer({
             style={{
               position: 'absolute', [side === 'left' ? 'left' : 'right']: 0,
               top: 0, width: 3, height: '100%',
-              background: 'rgba(90,140,255,0.9)', boxShadow: '0 0 8px rgba(90,140,255,0.8)',
+              background: col.charge, boxShadow: `0 0 8px ${col.chargeShadow}`,
               originY: 0, scaleY: 0,
             }}
             animate={{ scaleY: 1 }}
@@ -165,11 +209,11 @@ export default function Drawer({
         {isOpen && (
           <motion.div
             style={{
-              ...getPanelStyle(side),
+              ...getPanelStyle(side, col),
               ...(dropActive ? {
                 boxShadow: side === 'left'
-                  ? '5px 0 40px rgba(18,36,85,0.5), inset 0 0 0 2px rgba(80,140,255,0.55)'
-                  : '-5px 0 40px rgba(18,36,85,0.5), inset 0 0 0 2px rgba(80,140,255,0.55)',
+                  ? `5px 0 40px ${col.shadow}, inset 0 0 0 2px ${col.dropOutline}`
+                  : `-5px 0 40px ${col.shadow}, inset 0 0 0 2px ${col.dropOutline}`,
               } : {}),
             }}
             variants={getPanelVariants(side)}
@@ -190,8 +234,8 @@ export default function Drawer({
             <div style={{
               position: 'absolute', inset: 0, pointerEvents: 'none',
               background: side === 'left'
-                ? 'radial-gradient(ellipse 55% 40% at 0% 50%, rgba(28,48,105,0.18) 0%, transparent 70%)'
-                : 'radial-gradient(ellipse 55% 40% at 100% 50%, rgba(28,48,105,0.18) 0%, transparent 70%)',
+                ? `radial-gradient(ellipse 55% 40% at 0% 50%, ${col.ambient} 0%, transparent 70%)`
+                : `radial-gradient(ellipse 55% 40% at 100% 50%, ${col.ambient} 0%, transparent 70%)`,
             }} />
             <div style={{
               position: 'absolute', bottom: 0, left: 0, right: 0, height: 110, pointerEvents: 'none',
@@ -200,27 +244,49 @@ export default function Drawer({
             {dropActive && (
               <div style={{
                 position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 300,
-                background: 'radial-gradient(ellipse 80% 60% at 50% 50%, rgba(60,110,255,0.08) 0%, transparent 70%)',
+                background: `radial-gradient(ellipse 80% 60% at 50% 50%, ${col.ambient} 0%, transparent 70%)`,
               }} />
             )}
 
             {/* Header */}
             <div style={{
               padding: '14px 16px 10px', flexShrink: 0,
-              borderBottom: '1px solid rgba(35,58,110,0.35)',
+              borderBottom: `1px solid ${col.headerDiv}`,
               display: 'flex', alignItems: 'center', gap: 10,
             }}>
-              <span style={{ color: 'rgba(85,115,190,0.75)', fontSize: 9, letterSpacing: '3.5px', textTransform: 'uppercase' }}>
+              <span style={{ color: col.headerText, fontSize: 9, letterSpacing: '3.5px', textTransform: 'uppercase' }}>
                 {LABELS[side]}
               </span>
-              <div style={{ flex: 1, height: 1, background: 'linear-gradient(to right, rgba(38,62,118,0.45), transparent)' }} />
-              <span style={{ color: 'rgba(65,95,160,0.55)', fontSize: 10 }}>{localFiles.length}</span>
+              <div style={{ flex: 1, height: 1, background: `linear-gradient(to right, ${col.headerDiv}, transparent)` }} />
+              <span style={{ color: col.headerCount, fontSize: 10 }}>{localFiles.length}</span>
+
+              {/* Color swatch */}
+              <button
+                onClick={() => colorInputRef.current?.click()}
+                title="Change drawer color"
+                style={{
+                  width: 10, height: 10, borderRadius: '50%',
+                  background: color || DEFAULT_COLOR,
+                  border: `1px solid rgba(255,255,255,0.18)`,
+                  cursor: 'pointer', padding: 0, flexShrink: 0,
+                  opacity: 0.65, transition: 'opacity 0.15s, transform 0.15s',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = 'scale(1.4)' }}
+                onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.65'; e.currentTarget.style.transform = 'scale(1)' }}
+              />
+              <input
+                ref={colorInputRef}
+                type="color"
+                value={color || DEFAULT_COLOR}
+                onChange={(e) => onColorChange(e.target.value)}
+                style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
+              />
             </div>
 
             {dropActive && (
               <div style={{
                 padding: '6px 16px', flexShrink: 0,
-                color: 'rgba(90,140,255,0.7)', fontSize: 9,
+                color: col.dropText, fontSize: 9,
                 letterSpacing: '2px', textTransform: 'uppercase', textAlign: 'center',
               }}>— drop to store —</div>
             )}
@@ -248,8 +314,8 @@ export default function Drawer({
                       opacity: isDragging ? 0.25 : 1,
                       transition: 'opacity 0.15s',
                       borderRadius: 10,
-                      outline: isTarget ? '2px solid rgba(90,140,255,0.72)' : '2px solid transparent',
-                      boxShadow: isTarget ? '0 0 12px rgba(90,140,255,0.3)' : 'none',
+                      outline: isTarget ? `2px solid ${col.fileOutline}` : '2px solid transparent',
+                      boxShadow: isTarget ? `0 0 12px ${col.fileShadow}` : 'none',
                     }}
                     onDragStart={() => { setDraggingPath(file.path); isDraggingRef.current = true }}
                     onDragEnd={() => { setDraggingPath(null); setDragOverPath(null); isDraggingRef.current = false }}
@@ -270,6 +336,7 @@ export default function Drawer({
                       <FileItem
                         file={file}
                         drawerSide={side}
+                        accentColor={color}
                         onRemove={() => onMoveToDesktop(file.path)}
                       />
                     </motion.div>
@@ -278,7 +345,7 @@ export default function Drawer({
               })}
 
               {localFiles.length === 0 && !dropActive && (
-                <div style={{ color: 'rgba(60,90,145,0.4)', fontSize: 11, padding: 24, width: '100%', textAlign: 'center' }}>
+                <div style={{ color: col.empty, fontSize: 11, padding: 24, width: '100%', textAlign: 'center' }}>
                   — empty —
                 </div>
               )}

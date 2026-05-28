@@ -9,19 +9,26 @@ function applyOrder(files, order) {
   return [...sorted, ...rest]
 }
 
-const CLOSE_DELAY      = 300
-const HANDLE_THICK     = 12   // px — must match Drawer.jsx
-const HOVER_OPEN_DELAY = 2000 // ms — must match Drawer.jsx
+const CLOSE_DELAY  = 300
+const HANDLE_THICK = 12   // px — must match Drawer.jsx
+const DEFAULT_COLOR      = '#3458A8'
+const DEFAULT_HOVER_DELAY = 2000
 
 export default function App() {
   const [drawerFiles,  setDrawerFiles]  = useState({ left: [], right: [] })
   const [activeDrawer, setActiveDrawer] = useState(null)
-  const [chargingSide, setChargingSide] = useState(null) // 'left' | 'right' | null
+  const [chargingSide, setChargingSide] = useState(null)
+  const [drawerColors, setDrawerColors] = useState({ left: DEFAULT_COLOR, right: DEFAULT_COLOR })
+  const [hoverDelay,   setHoverDelay]   = useState(DEFAULT_HOVER_DELAY)
 
   const activeDrawerRef = useRef(null)
   const closeTimerRef   = useRef(null)
   const chargeTimerRef  = useRef(null)
   const lastIgnoreState = useRef(true)
+  // ref so the mousemove effect always reads the latest delay without re-subscribing
+  const hoverDelayRef   = useRef(DEFAULT_HOVER_DELAY)
+
+  useEffect(() => { hoverDelayRef.current = hoverDelay }, [hoverDelay])
 
   const screenW = typeof window !== 'undefined' ? window.screen.width : 1920
 
@@ -32,16 +39,26 @@ export default function App() {
         window.electron.readDrawer('right'),
         window.electron.readConfig(),
       ])
-      const order = config.drawerOrder || {}
+      const order  = config.drawerOrder  || {}
+      const colors = config.drawerColors || {}
       setDrawerFiles({
         left:  applyOrder(leftFiles,  order.left),
         right: applyOrder(rightFiles, order.right),
       })
+      setDrawerColors({
+        left:  colors.left  || DEFAULT_COLOR,
+        right: colors.right || DEFAULT_COLOR,
+      })
+      setHoverDelay(config.hoverDelay || DEFAULT_HOVER_DELAY)
     })()
     window.electron.onDrawerChange(({ side, files }) => {
       setDrawerFiles(prev => ({ ...prev, [side]: files }))
     })
-    return () => window.electron.removeDrawerListener()
+    window.electron.onHoverDelayChange((ms) => setHoverDelay(ms))
+    return () => {
+      window.electron.removeDrawerListener()
+      window.electron.removeHoverDelayListener()
+    }
   }, [])
 
   const setIgnoreMouse = useCallback((ignore) => {
@@ -69,7 +86,6 @@ export default function App() {
 
   // ── Mouse movement: charge timer runs here because mouseenter on the handle
   //    doesn't fire reliably in setIgnoreMouseEvents(true, {forward:true}) mode.
-  //    Only mousemove is guaranteed to be forwarded.
   useEffect(() => {
     const onMouseMove = (e) => {
       const { clientX: x } = e
@@ -80,7 +96,6 @@ export default function App() {
         return
       }
 
-      // Keep window click-through while no drawer is open
       setIgnoreMouse(true)
 
       const nearLeft  = x <= HANDLE_THICK
@@ -88,17 +103,15 @@ export default function App() {
 
       if (nearLeft || nearRight) {
         const side = nearLeft ? 'left' : 'right'
-        // Don't restart if already charging the same side
         if (chargeTimerRef.current === null) {
           setChargingSide(side)
           chargeTimerRef.current = setTimeout(() => {
             chargeTimerRef.current = null
             setChargingSide(null)
             openDrawer(side)
-          }, HOVER_OPEN_DELAY)
+          }, hoverDelayRef.current)
         }
       } else {
-        // Cursor left the handle zone — cancel charge
         if (chargeTimerRef.current !== null) clearCharge()
       }
     }
@@ -114,7 +127,7 @@ export default function App() {
       setIgnoreMouse(false)
       cancelClose()
       const x = e.clientX
-      if (x <= HANDLE_THICK)             openDrawer('left')
+      if (x <= HANDLE_THICK)                openDrawer('left')
       else if (x >= screenW - HANDLE_THICK) openDrawer('right')
     }
 
@@ -146,6 +159,17 @@ export default function App() {
   const handleMoveToDrawer       = useCallback(async (p, side) => window.electron.moveToDrawer(p, side), [])
   const handleMoveBetweenDrawers = useCallback(async (p, toSide) => window.electron.moveToDrawer(p, toSide), [])
 
+  const handleColorChange = useCallback((side, color) => {
+    setDrawerColors(prev => {
+      const next = { ...prev, [side]: color }
+      window.electron.readConfig().then(cfg =>
+        window.electron.writeConfig({ ...cfg, drawerColors: next })
+      )
+      return next
+    })
+    window.electron.updateTrayColor(color)
+  }, [])
+
   const handleDesktopDrop = useCallback(async (e) => {
     const filePath = e.dataTransfer.getData('application/x-drawer-file')
     if (!filePath) return
@@ -166,6 +190,9 @@ export default function App() {
           files={drawerFiles[side]}
           isOpen={activeDrawer === side}
           isCharging={chargingSide === side}
+          color={drawerColors[side]}
+          hoverDelay={hoverDelay}
+          onColorChange={(color) => handleColorChange(side, color)}
           onDrawerLeave={scheduleClose}
           onDrawerEnter={cancelClose}
           onMoveToDesktop={handleMoveToDesktop}

@@ -8,7 +8,8 @@
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
     "start": "npm run dev",
     "build:renderer": "vite build",
-    "build": "npm run build:renderer && electron-builder"
+    "build": "npm run build:renderer && electron-builder --publish=never",
+    "build:dir": "npm run build:renderer && electron-builder --dir --publish=never"
   },
   "dependencies": {
     "framer-motion": "^11.0.0",
@@ -21,16 +22,45 @@
     "concurrently": "^8.2.0",
     "cross-env": "^7.0.3",
     "electron": "^30.0.0",
+    "electron-builder": "^24.13.3",
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.0",
     "vite": "^5.2.0",
     "wait-on": "^7.2.0"
   },
   "build": {
-    "appId": "com.desktopDrawer.app",
+    "appId": "com.desktopdrawer.app",
     "productName": "DesktopDrawer",
+    "copyright": "Copyright (c) 2026 DesktopDrawer",
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
     "win": {
-      "target": "nsis"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DesktopDrawer",
+      "installerLanguages": [
+        "en_US"
+      ],
+      "warningsAsErrors": false,
+      "perMachine": false
     }
   }
 }

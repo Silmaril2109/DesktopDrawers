@@ -25,42 +25,56 @@ let ignoreMouseEvents = true
 const iconCache = new Map()
 
 // ─── Tray icon (generated inline — no external assets required) ───────────────
-function makeTrayIcon() {
-  const zlib = require('zlib')
-
-  // CRC32 for PNG chunks
-  const crcTable = (() => {
-    const t = new Uint32Array(256)
-    for (let i = 0; i < 256; i++) {
-      let c = i
-      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1)
-      t[i] = c
-    }
-    return t
-  })()
-  function crc32(buf) {
-    let c = 0xFFFFFFFF
-    for (let i = 0; i < buf.length; i++) c = crcTable[(c ^ buf[i]) & 0xFF] ^ (c >>> 8)
-    return (c ^ 0xFFFFFFFF) >>> 0
+const _zlib = require('zlib')
+const _crcTable = (() => {
+  const t = new Uint32Array(256)
+  for (let i = 0; i < 256; i++) {
+    let c = i
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1)
+    t[i] = c
   }
-  function pngChunk(type, data) {
-    const typeBuf = Buffer.from(type, 'ascii')
-    const lenBuf  = Buffer.allocUnsafe(4); lenBuf.writeUInt32BE(data.length, 0)
-    const crcBuf  = Buffer.allocUnsafe(4); crcBuf.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0)
-    return Buffer.concat([lenBuf, typeBuf, data, crcBuf])
-  }
+  return t
+})()
+function _crc32(buf) {
+  let c = 0xFFFFFFFF
+  for (let i = 0; i < buf.length; i++) c = _crcTable[(c ^ buf[i]) & 0xFF] ^ (c >>> 8)
+  return (c ^ 0xFFFFFFFF) >>> 0
+}
+function _pngChunk(type, data) {
+  const typeBuf = Buffer.from(type, 'ascii')
+  const lenBuf  = Buffer.allocUnsafe(4); lenBuf.writeUInt32BE(data.length, 0)
+  const crcBuf  = Buffer.allocUnsafe(4); crcBuf.writeUInt32BE(_crc32(Buffer.concat([typeBuf, data])), 0)
+  return Buffer.concat([lenBuf, typeBuf, data, crcBuf])
+}
 
-  const W = 16, H = 16
+// Alternates between two temp files so Windows never reads a file mid-write
+let _traySlot = 0
+
+function makeTrayIconWithColor(hex) {
+  const clean = (hex || '#3458A8').replace('#', '')
+  const cr = parseInt(clean.slice(0, 2), 16)
+  const cg = parseInt(clean.slice(2, 4), 16)
+  const cb = parseInt(clean.slice(4, 6), 16)
+  const clamp = (v) => Math.max(0, Math.min(255, Math.round(v)))
+  const br = clamp(cr * 1.7), bg = clamp(cg * 1.6), bb = clamp(cb * 1.5)
+
+  // 32×32 for crisp rendering at high-DPI
+  const W = 32, H = 32, CX = 15.5, CY = 15.5
   const raw = []
   for (let y = 0; y < H; y++) {
-    raw.push(0) // filter = None per row
+    raw.push(0)
     for (let x = 0; x < W; x++) {
-      const dx = x - 7.5, dy = y - 7.5, d = Math.sqrt(dx*dx + dy*dy)
-      if (d < 5.5) {
-        const t = Math.max(0, 1 - d / 5.5)
-        raw.push(30 + Math.round(t*70), 70 + Math.round(t*110), 180 + Math.round(t*75), 240)
-      } else if (d < 7) {
-        raw.push(18, 28, 62, 160)
+      const dx = x - CX, dy = y - CY, d = Math.sqrt(dx*dx + dy*dy)
+      if (d < 11) {
+        const t = Math.max(0, 1 - d / 11)
+        raw.push(
+          clamp(cr + Math.round(t * (br - cr))),
+          clamp(cg + Math.round(t * (bg - cg))),
+          clamp(cb + Math.round(t * (bb - cb))),
+          240
+        )
+      } else if (d < 14) {
+        raw.push(clamp(cr * 0.35), clamp(cg * 0.32), clamp(cb * 0.37), 160)
       } else {
         raw.push(0, 0, 0, 0)
       }
@@ -73,19 +87,32 @@ function makeTrayIcon() {
 
   const png = Buffer.concat([
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    pngChunk('IHDR', ihdr),
-    pngChunk('IDAT', zlib.deflateSync(Buffer.from(raw))),
-    pngChunk('IEND', Buffer.alloc(0)),
+    _pngChunk('IHDR', ihdr),
+    _pngChunk('IDAT', _zlib.deflateSync(Buffer.from(raw))),
+    _pngChunk('IEND', Buffer.alloc(0)),
   ])
-  return nativeImage.createFromBuffer(png)
+
+  // Write to a temp file — file-path tray.setImage() is reliable on Windows
+  // where nativeImage buffers sometimes don't update the tray visually
+  _traySlot = 1 - _traySlot
+  const tmpPath = path.join(os.tmpdir(), `desktopdrawer-tray-${_traySlot}.png`)
+  fs.writeFileSync(tmpPath, png)
+  return tmpPath
 }
 
 function createTray() {
-  tray = new Tray(makeTrayIcon())
+  const initConfig = readConfig()
+  const initColor  = initConfig.trayColor || initConfig.drawerColors?.left || '#3458A8'
+  tray = new Tray(makeTrayIconWithColor(initColor))
   tray.setToolTip('DesktopDrawer')
 
+  const DELAY_OPTIONS = [500, 1000, 1500, 2000, 3000]
+
   const buildMenu = () => {
-    const loginItem = app.getLoginItemSettings()
+    const loginItem    = app.getLoginItemSettings()
+    const cfg          = readConfig()
+    const currentDelay = cfg.hoverDelay || 2000
+
     return Menu.buildFromTemplate([
       {
         label: 'Reload Overlay',
@@ -96,6 +123,24 @@ function createTray() {
       {
         label: 'Restart App',
         click: () => { app.relaunch(); app.exit(0) },
+      },
+      { type: 'separator' },
+      {
+        label: 'Hover Delay',
+        submenu: DELAY_OPTIONS.map(ms => ({
+          label: ms < 1000 ? `${ms} ms` : `${ms / 1000} s`,
+          type: 'radio',
+          checked: currentDelay === ms,
+          click: () => {
+            const c = readConfig()
+            c.hoverDelay = ms
+            writeConfig(c)
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('hover-delay-changed', ms)
+            }
+            tray.setContextMenu(buildMenu())
+          },
+        })),
       },
       { type: 'separator' },
       {
@@ -113,7 +158,6 @@ function createTray() {
   }
 
   tray.setContextMenu(buildMenu())
-  // Left-click also opens the menu (Windows convention)
   tray.on('click', () => tray.popUpContextMenu())
 }
 
@@ -329,14 +373,18 @@ function createWindow() {
     width,
     height,
     transparent: true,
+    backgroundColor: '#00000000',
     frame: false,
     skipTaskbar: true,
     alwaysOnTop: true,
     resizable: false,
     movable: false,
-    focusable: false,   // never steal focus from user's active window
+    // NOTE: focusable:false is intentionally removed — on Windows, combining
+    // focusable:false with transparent:true causes DWM to never paint the window
+    // on many machines (it shows in tray/task but renders invisible).
+    // setIgnoreMouseEvents already provides click-through without this flag.
     hasShadow: false,
-    type: 'toolbar',    // WS_EX_TOOLWINDOW — removes from Alt+Tab and taskbar grouping
+    show: false,  // show explicitly after load to avoid blank-flash and ensure paint
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -361,6 +409,14 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
+
+  // Show only after content is painted — prevents invisible-window on cold GPU init
+  mainWindow.webContents.once('did-finish-load', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show()
+      mainWindow.setAlwaysOnTop(true, 'screen-saver')
+    }
+  })
 
   mainWindow.on('closed', () => {
     mainWindow = null
@@ -454,6 +510,13 @@ ipcMain.handle('move-file', (_, { src, dest }) => {
 
 ipcMain.handle('read-config', () => readConfig())
 ipcMain.handle('write-config', (_, config) => writeConfig(config))
+
+ipcMain.on('update-tray-color', (_, hex) => {
+  if (tray && !tray.isDestroyed()) tray.setImage(makeTrayIconWithColor(hex))
+  const c = readConfig()
+  c.trayColor = hex
+  writeConfig(c)
+})
 
 ipcMain.handle('save-drawer-order', (_, { side, paths }) => {
   const config = readConfig()
