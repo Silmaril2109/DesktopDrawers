@@ -122,4 +122,4 @@ You can change the hover delay and drawer colors from the tray menu — no manua
 
 ## License
 
-MIT
+
