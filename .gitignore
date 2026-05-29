@@ -27,3 +27,6 @@ Thumbs.db
 # Launch helpers (local machine specific)
 *.bat
 *.vbs
+
+# Internal AI instructions
+CLAUDE.MD
