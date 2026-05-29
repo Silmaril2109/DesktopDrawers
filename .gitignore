@@ -1,1 +1,29 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+release/
+
+# Logs
+*.log
+drawer.log
+
+# Local config (user-specific drawer assignments — each user sets their own)
+drawer-config.json
+
+# Environment
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Launch helpers (local machine specific)
+*.bat
+*.vbs
